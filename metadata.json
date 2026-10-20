@@ -1,0 +1,6 @@
+{
+  "name": "Photo & Video Report PWA",
+  "description": "スマホに最適化された写真・動画現場報告アプリ。撮影・複数選択、個別説明付与、Googleフォト共有アルバム連携、定型メール・添付送信に対応。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
