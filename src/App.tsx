@@ -19,7 +19,9 @@ import {
   Image as ImageIcon,
   AlertCircle,
   HelpCircle,
-  Send
+  Send,
+  Maximize,
+  Minimize
 } from 'lucide-react';
 
 import { MediaItem, AppSettings, DEFAULT_SETTINGS } from './types';
@@ -53,6 +55,55 @@ export default function App() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [copiedAlbumUrl, setCopiedAlbumUrl] = useState(false);
+
+  // Fullscreen state & detection
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isDocFullscreen = !!(
+        document.fullscreenElement ||
+        (document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement
+      );
+      setIsFullscreen(isDocFullscreen);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+
+    // Initial check
+    handleFullscreenChange();
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      const isCurrentFullscreen = !!(
+        document.fullscreenElement ||
+        (document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement
+      );
+
+      if (!isCurrentFullscreen) {
+        if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        } else if ((document.documentElement as unknown as { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen) {
+          await (document.documentElement as unknown as { webkitRequestFullscreen: () => Promise<void> }).webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if ((document as unknown as { webkitExitFullscreen?: () => Promise<void> }).webkitExitFullscreen) {
+          await (document as unknown as { webkitExitFullscreen: () => Promise<void> }).webkitExitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.warn('Fullscreen toggle failed:', err);
+    }
+  };
 
   // Save settings to localStorage
   const handleSaveSettings = (newSettings: AppSettings) => {
@@ -190,6 +241,24 @@ export default function App() {
 
           {/* Right Action Tools */}
           <div className="flex items-center gap-1.5">
+            {/* Fullscreen Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className={`p-2 rounded-xl border active:scale-95 transition ${
+                isFullscreen
+                  ? 'bg-sky-500/20 text-sky-400 border-sky-500/40'
+                  : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700/60'
+              }`}
+              title={isFullscreen ? '全画面を解除' : '全画面表示にする'}
+            >
+              {isFullscreen ? (
+                <Minimize className="w-4 h-4" />
+              ) : (
+                <Maximize className="w-4 h-4" />
+              )}
+            </button>
+
             {/* PWA Install Button */}
             <PWAInstallButton />
 
@@ -208,6 +277,26 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-2xl w-full mx-auto px-3.5 sm:px-4 py-4 space-y-4">
+        {/* Fullscreen Quick Mode Notice */}
+        {!isFullscreen && (
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-sky-950/60 to-slate-900 border border-sky-500/30 text-sky-300 text-xs shadow-sm hover:border-sky-500/50 transition active:scale-[0.99]"
+          >
+            <div className="flex items-center gap-2">
+              <Maximize className="w-4 h-4 text-sky-400 shrink-0" />
+              <div className="text-left">
+                <span className="font-semibold text-white">全画面表示にする</span>
+                <span className="text-slate-400 ml-1.5 hidden sm:inline">（ブラウザのアドレスバー・余白を非表示）</span>
+              </div>
+            </div>
+            <span className="text-[11px] bg-sky-500/20 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded-full font-semibold">
+              全画面起動
+            </span>
+          </button>
+        )}
+
         {/* Google Photos Shared Album Quick Card */}
         <section className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-slate-850 border border-slate-800 p-4 shadow-lg relative overflow-hidden">
           <div className="absolute -top-12 -right-12 w-32 h-32 bg-sky-500/10 rounded-full blur-2xl pointer-events-none" />
