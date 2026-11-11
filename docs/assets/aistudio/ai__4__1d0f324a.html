@@ -1,0 +1,935 @@
+<!-- Version: v1.4 -->
+<!-- System: 見積書 AI明細自動抽出・購買申請システム -->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>見積書 AI高精度テキスト化・明細抽出 (Gemini Powered) v1.4</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap');
+    body {
+      font-family: 'Inter', 'Noto Sans JP', sans-serif;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 3px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    .pulse-ai {
+      animation: pulseGlow 2s infinite ease-in-out;
+    }
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
+      50% { box-shadow: 0 0 25px rgba(99, 102, 241, 0.6); }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col">
+
+  <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="bg-gradient-to-tr from-blue-600 to-indigo-500 text-white p-2.5 rounded-xl shadow-md flex items-center justify-center">
+          <i class="fa-solid fa-wand-magic-sparkles text-xl"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg leading-tight flex items-center gap-2">
+            見積書 AI明細自動抽出 <span class="text-xs text-slate-400 font-normal">v1.4</span>
+            <span class="bg-gradient-to-r from-blue-400 to-indigo-300 bg-clip-text text-transparent text-xs font-semibold px-2 py-0.5 rounded-full border border-blue-500/30 bg-blue-950/50">Gemini 3 Flash</span>
+          </h1>
+          <p class="text-xs text-slate-400">資材・建材・ホームセンター見積書対応 AI-OCR</p>
+        </div>
+      </div>
+      
+      <div class="flex items-center space-x-3">
+        <button id="open-api-modal-btn" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5 cursor-pointer">
+          <i class="fa-solid fa-key text-amber-400"></i>
+          <span id="api-key-status">API Key 設定</span>
+        </button>
+        <div class="hidden sm:flex items-center space-x-2 text-xs bg-emerald-950/60 text-emerald-300 border border-emerald-800/50 px-3 py-1.5 rounded-full">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+          <span class="font-medium">AI高精度解析モード</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+    <!-- Left Side: File Upload & Document Visual Preview (5 cols) -->
+    <div class="lg:col-span-5 flex flex-col gap-4">
+      
+      <!-- Upload Card -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5">
+        <h2 class="text-sm font-bold text-slate-800 mb-3 flex items-center justify-between">
+          <span class="flex items-center gap-2"><i class="fa-solid fa-file-invoice text-blue-600"></i> 見積書ファイルの読み込み</span>
+          <span class="text-xs text-slate-400 font-normal">PDF / 画像 (自動回転対応)</span>
+        </h2>
+        
+        <!-- Dropzone -->
+        <div id="drop-zone" class="border-2 border-dashed border-slate-300 hover:border-blue-500 transition-all duration-200 rounded-xl p-5 text-center cursor-pointer bg-slate-50/50 hover:bg-blue-50/30 flex flex-col items-center justify-center min-h-[140px] group">
+          <input type="file" id="file-input" accept="image/*,application/pdf" capture="environment" class="hidden">
+          <div class="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+            <i class="fa-solid fa-camera text-2xl text-blue-600"></i>
+          </div>
+          <p class="text-sm font-semibold text-slate-700">クリックして撮影・ファイル選択</p>
+          <p class="text-xs text-slate-400 mt-1">スマホカメラ / PDF / JPG / PNG 対応</p>
+        </div>
+
+        <!-- File Active Tag & AI Trigger Button -->
+        <div id="file-info" class="hidden mt-4 space-y-3">
+          <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs text-slate-700">
+            <div class="truncate flex items-center gap-2 max-w-[240px]">
+              <i class="fa-solid fa-file-pdf text-red-500 text-sm"></i>
+              <span id="file-name" class="font-medium truncate">document.pdf</span>
+            </div>
+            <button id="remove-file-btn" class="text-slate-400 hover:text-red-500 p-1 rounded-lg transition cursor-pointer">
+              <i class="fa-solid fa-xmark text-sm"></i>
+            </button>
+          </div>
+
+          <button id="process-btn" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold py-3 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-sm pulse-ai cursor-pointer">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+            <span>Gemini AI で明細抽出しテキスト化</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Document Canvas Preview -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4 flex flex-col flex-1 min-h-[380px] max-h-[600px]">
+        <div class="flex items-center justify-between pb-3 mb-2 border-b border-slate-100 text-xs font-semibold text-slate-600">
+          <span class="flex items-center gap-1.5"><i class="fa-regular fa-image text-slate-400"></i> 原本プレビュー</span>
+          <span id="preview-page-info" class="text-slate-400 font-normal">未読込</span>
+        </div>
+        
+        <div id="canvas-container" class="flex-1 bg-slate-100/70 rounded-xl border border-slate-200 overflow-auto flex items-center justify-center p-2 custom-scrollbar relative">
+          <p id="canvas-placeholder" class="text-xs text-slate-400 text-center flex flex-col items-center gap-2">
+            <i class="fa-regular fa-file-image text-3xl text-slate-300"></i>
+            ファイルを選択するとプレビューが表示されます
+          </p>
+          <canvas id="pdf-canvas" class="hidden shadow-md max-w-full h-auto rounded bg-white"></canvas>
+          <img id="image-preview" class="hidden shadow-md max-w-full h-auto rounded object-contain" alt="見積書画像">
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right Side: AI Processing Indicator & Extracted Results (7 cols) -->
+    <div class="lg:col-span-7 flex flex-col gap-4">
+
+      <div id="ai-status-card" class="hidden bg-white rounded-2xl shadow-sm border border-blue-200 p-5 bg-gradient-to-r from-blue-50/50 to-indigo-50/50">
+        <div class="flex items-center gap-3">
+          <div class="relative flex items-center justify-center">
+            <div class="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+            <i class="fa-solid fa-brain text-blue-600 text-xs absolute"></i>
+          </div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between mb-1">
+              <h3 id="ai-status-title" class="text-sm font-bold text-slate-800">Gemini 3 Flash が見積書を読解中...</h3>
+              <span id="ai-status-percent" class="text-xs font-semibold text-blue-600">解析中</span>
+            </div>
+            <p id="ai-status-desc" class="text-xs text-slate-500">表構造、品番・規格・建材名、単価、数量、金額を抽出しています。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action & Output Tab Header -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <button id="tab-table" class="px-4 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200/80 shadow-xs flex items-center gap-2 cursor-pointer">
+            <i class="fa-solid fa-list-check"></i> 抽出明細リスト (<span id="item-count">0</span>)
+          </button>
+          <button id="tab-raw" class="px-4 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent transition flex items-center gap-2 cursor-pointer">
+            <i class="fa-solid fa-code"></i> AIレスポンスJSON
+          </button>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button id="copy-table-btn" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300/80 transition flex items-center gap-1.5 cursor-pointer">
+            <i class="fa-regular fa-copy"></i> コピー
+          </button>
+          <button id="download-csv-btn" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300/80 transition flex items-center gap-1.5 cursor-pointer">
+            <i class="fa-solid fa-file-csv"></i> CSV
+          </button>
+        </div>
+      </div>
+
+      <div id="panel-table" class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col flex-1 min-h-[480px]">
+        <div class="p-3.5 bg-slate-50/80 border-b border-slate-200/80 flex justify-between items-center text-xs text-slate-500">
+          <span class="font-medium text-slate-600"><i class="fa-solid fa-table-cells mr-1.5 text-blue-500"></i> AI抽出項目 (項目名をクリックして直接編集可)</span>
+          <button id="add-row-btn" class="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-xs cursor-pointer">
+            <i class="fa-solid fa-plus text-xs"></i> 行追加
+          </button>
+        </div>
+
+        <!-- 基本情報 (会社名・日付) -->
+        <div class="p-4 border-b border-slate-100 flex flex-wrap gap-4 bg-white hidden" id="basic-info-container">
+            <div class="flex-1 min-w-[200px]">
+                <label class="block text-xs font-semibold text-slate-500 mb-1">見積発行会社 (発注先)</label>
+                <input type="text" id="info-company" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none transition" placeholder="会社名・店舗名">
+            </div>
+            <div class="w-48">
+                <label class="block text-xs font-semibold text-slate-500 mb-1">見積日</label>
+                <input type="text" id="info-date" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none transition" placeholder="YYYY/MM/DD">
+            </div>
+        </div>
+
+        <div class="overflow-x-auto flex-1 custom-scrollbar">
+          <table class="w-full text-left border-collapse min-w-[760px]">
+            <thead>
+              <tr class="bg-slate-100/70 text-slate-600 text-xs font-semibold uppercase tracking-wider border-b border-slate-200">
+                <th class="py-3 px-3 w-10 text-center">#</th>
+                <th class="py-3 px-4">商品名・規格・資材名</th>
+                <th class="py-3 px-3 w-20 text-right">数量</th>
+                <th class="py-3 px-3 w-20 text-center">単位</th>
+                <th class="py-3 px-4 w-28 text-right">単価 (円)</th>
+                <th class="py-3 px-4 w-32 text-right">金額 (円)</th>
+                <th class="py-3 px-4 w-36">備考</th>
+                <th class="py-3 px-3 w-12 text-center">操作</th>
+              </tr>
+            </thead>
+            <tbody id="items-tbody" class="divide-y divide-slate-100 text-sm">
+              <tr id="empty-row">
+                <td colspan="8" class="py-16 text-center text-slate-400">
+                  <div class="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-300">
+                    <i class="fa-solid fa-receipt text-3xl"></i>
+                  </div>
+                  <p class="text-sm font-medium text-slate-600">見積書ファイルを指定し「AIで明細抽出しテキスト化」をクリックしてください</p>
+                  <p class="text-xs text-slate-400 mt-1">ホームセンター資材の半角カタカナや複雑な型番も高精度で読み取ります</p>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="p-4 bg-slate-50/80 border-t border-slate-200/80 flex justify-between items-center">
+          <div class="text-xs text-slate-500 flex items-center gap-2">
+            <i class="fa-solid fa-circle-info text-blue-500"></i>
+            <span>半角カタカナは自動的に全角・正規形に補正されます</span>
+          </div>
+          <div class="text-right">
+            <span class="text-xs text-slate-500 mr-2 font-medium">合計金額:</span>
+            <span id="total-amount" class="text-xl font-bold text-slate-900 font-mono">¥0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Raw AI JSON View -->
+      <div id="panel-raw" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col flex-1 min-h-[480px]">
+        <div class="p-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center text-xs text-slate-500">
+          <span>Gemini API 返却レスポンス (JSON)</span>
+          <button id="copy-json-btn" class="text-blue-600 hover:text-blue-800 font-medium cursor-pointer">
+            <i class="fa-regular fa-copy"></i> JSONコピー
+          </button>
+        </div>
+        <textarea id="raw-json-textarea" readonly class="w-full flex-1 p-4 font-mono text-xs text-slate-700 bg-slate-900 text-emerald-400 focus:outline-none resize-none custom-scrollbar" placeholder="AIの解析結果データがここに表示されます..."></textarea>
+      </div>
+
+      <!-- Mail Send Trigger Button Box -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-paper-plane text-blue-600"></i> 発注依頼書・購買申請メール送信
+          </h3>
+          <p class="text-xs text-slate-500 mt-0.5">Googleドライブのテンプレートを元にエクセルを作成し、原本画像と一緒に送信します</p>
+        </div>
+        <button id="open-mail-modal-btn" class="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-2 pulse-ai cursor-pointer">
+          <i class="fa-solid fa-envelope-open-text"></i> 購買申請メール作成...
+        </button>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Mail Send Modal -->
+  <div id="mail-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 border border-slate-100 max-h-[90vh] overflow-y-auto custom-scrollbar">
+      <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
+        <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+          <i class="fa-solid fa-paper-plane text-blue-600"></i> 購買申請メール送信設定 (GAS連携)
+        </h3>
+        <button id="close-mail-modal-btn" class="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+      
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">送信先メールアドレス (To)</label>
+          <input type="email" id="mail-to-input" value="yooooohey@gmail.com" placeholder="manager@example.com" class="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">メール表題</label>
+          <input type="text" id="mail-subject-input" class="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="【資材購買の要請】見積先">
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">書類の件名</label>
+            <input type="text" id="doc-subject-input" class="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="一番最初の商品名 他">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">添付ファイル名 (.xlsx)</label>
+            <input type="text" id="file-name-input" class="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-xs" placeholder="YYMMDD【発注依頼書】会社名 件名.xlsx">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">購買理由 (B17〜B21に転記 / 最大5行)</label>
+          <textarea id="purchase-reason-input" class="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none min-h-[70px] resize-y" placeholder="ここに購買理由を入力..."></textarea>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">メール本文</label>
+          <textarea id="mail-body-input" class="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none min-h-[100px] resize-y" placeholder="本文を入力してください..."></textarea>
+        </div>
+      </div>
+
+      <div class="mt-6 flex justify-end gap-2 pt-3 border-t border-slate-100">
+        <button id="cancel-mail-modal-btn" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer">
+          キャンセル
+        </button>
+        <button id="execute-mail-btn" class="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer">
+          <i class="fa-solid fa-paper-plane"></i> 申請メールを送信する
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- API Key Modal -->
+  <div id="api-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-100">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+          <i class="fa-solid fa-key text-amber-500"></i> Gemini API & GAS 設定
+        </h3>
+        <button id="close-api-modal-btn" class="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+      
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">API Key (任意)</label>
+          <input type="password" id="custom-api-key-input" placeholder="AIzaSy..." class="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono">
+          <p class="text-[11px] text-slate-400 mt-1">※空の場合はシステムのデフォルトAPI接続を使用します。</p>
+        </div>
+        <div class="pt-2 border-t border-slate-100">
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">GAS Web App URL</label>
+          <input type="url" id="gas-url-input" class="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none font-mono text-xs" value="https://script.google.com/macros/s/AKfycbzCsx2vu2bIuC8zwIfFZKvLTG-Nyj-ctlinTpDbArYN2yyTyg0h7Fg-d5iyZeJoKE_l/exec">
+          <p class="text-[11px] text-slate-400 mt-1">※バックエンド連携用URL</p>
+        </div>
+      </div>
+
+      <div class="mt-6 flex justify-end gap-2">
+        <button id="clear-api-key-btn" class="px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer">
+          リセット
+        </button>
+        <button id="save-api-key-btn" class="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-xs transition cursor-pointer">
+          保存する
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="fixed bottom-6 right-6 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl border border-slate-700 transform translate-y-20 opacity-0 transition-all duration-300 flex items-center gap-3 z-50">
+    <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400 text-lg"></i>
+    <span id="toast-msg" class="text-sm font-medium">通知メッセージ</span>
+  </div>
+
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbzCsx2vu2bIuC8zwIfFZKvLTG-Nyj-ctlinTpDbArYN2yyTyg0h7Fg-d5iyZeJoKE_l/exec';
+
+    let currentFile = null;
+    let base64ImageForAI = null;
+    let extractedItems = [];
+    let extractedCompany = "";
+    let extractedDate = "";
+    let customApiKey = localStorage.getItem('gemini_custom_api_key') || '';
+    let gasWebAppUrl = localStorage.getItem('gas_web_app_url') || DEFAULT_GAS_URL;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const dropZone = document.getElementById('drop-zone');
+      const fileInput = document.getElementById('file-input');
+      const fileInfo = document.getElementById('file-info');
+      const removeFileBtn = document.getElementById('remove-file-btn');
+      const processBtn = document.getElementById('process-btn');
+
+      const pdfCanvas = document.getElementById('pdf-canvas');
+      const imagePreview = document.getElementById('image-preview');
+      const canvasPlaceholder = document.getElementById('canvas-placeholder');
+      const previewPageInfo = document.getElementById('preview-page-info');
+
+      const tabTable = document.getElementById('tab-table');
+      const tabRaw = document.getElementById('tab-raw');
+      const panelTable = document.getElementById('panel-table');
+      const panelRaw = document.getElementById('panel-raw');
+
+      const infoCompany = document.getElementById('info-company');
+      const infoDate = document.getElementById('info-date');
+
+      const copyTableBtn = document.getElementById('copy-table-btn');
+      const copyJsonBtn = document.getElementById('copy-json-btn');
+      const downloadCsvBtn = document.getElementById('download-csv-btn');
+      const addRowBtn = document.getElementById('add-row-btn');
+
+      const openApiModalBtn = document.getElementById('open-api-modal-btn');
+      const closeApiModalBtn = document.getElementById('close-api-modal-btn');
+      const apiModal = document.getElementById('api-modal');
+      const customApiKeyInput = document.getElementById('custom-api-key-input');
+      const gasUrlInput = document.getElementById('gas-url-input');
+      const saveApiKeyBtn = document.getElementById('save-api-key-btn');
+      const clearApiKeyBtn = document.getElementById('clear-api-key-btn');
+
+      const openMailModalBtn = document.getElementById('open-mail-modal-btn');
+      const closeMailModalBtn = document.getElementById('close-mail-modal-btn');
+      const cancelMailModalBtn = document.getElementById('cancel-mail-modal-btn');
+      const mailModal = document.getElementById('mail-modal');
+      const executeMailBtn = document.getElementById('execute-mail-btn');
+      const docSubjectInput = document.getElementById('doc-subject-input');
+      const mailSubjectInput = document.getElementById('mail-subject-input');
+
+      updateApiKeyUI();
+
+      dropZone.addEventListener('click', () => fileInput.click());
+      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500', 'bg-blue-50/50'); });
+      dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('border-blue-500', 'bg-blue-50/50'); });
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('border-blue-500', 'bg-blue-50/50');
+        if (e.dataTransfer.files.length > 0) handleFileSelect(e.dataTransfer.files[0]);
+      });
+
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) handleFileSelect(e.target.files[0]);
+      });
+
+      removeFileBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        resetFileSelect();
+      });
+
+      openMailModalBtn.addEventListener('click', () => {
+        if (extractedItems.length === 0) {
+          showToast('送信する明細データがありません', 'error');
+          return;
+        }
+        initializeDefaultMailForm();
+        mailModal.classList.remove('hidden');
+      });
+
+      closeMailModalBtn.addEventListener('click', () => mailModal.classList.add('hidden'));
+      cancelMailModalBtn.addEventListener('click', () => mailModal.classList.add('hidden'));
+
+      openApiModalBtn.addEventListener('click', () => {
+        customApiKeyInput.value = customApiKey;
+        gasUrlInput.value = gasWebAppUrl;
+        apiModal.classList.remove('hidden');
+      });
+      closeApiModalBtn.addEventListener('click', () => apiModal.classList.add('hidden'));
+
+      saveApiKeyBtn.addEventListener('click', () => {
+        customApiKey = customApiKeyInput.value.trim();
+        gasWebAppUrl = gasUrlInput.value.trim() || DEFAULT_GAS_URL;
+        if (customApiKey) localStorage.setItem('gemini_custom_api_key', customApiKey);
+        else localStorage.removeItem('gemini_custom_api_key');
+        localStorage.setItem('gas_web_app_url', gasWebAppUrl);
+        showToast('設定を保存しました');
+        updateApiKeyUI();
+        apiModal.classList.add('hidden');
+      });
+
+      clearApiKeyBtn.addEventListener('click', () => {
+        customApiKey = '';
+        gasWebAppUrl = DEFAULT_GAS_URL;
+        customApiKeyInput.value = '';
+        gasUrlInput.value = DEFAULT_GAS_URL;
+        localStorage.removeItem('gemini_custom_api_key');
+        localStorage.setItem('gas_web_app_url', DEFAULT_GAS_URL);
+        updateApiKeyUI();
+        showToast('設定を初期値にリセットしました');
+        apiModal.classList.add('hidden');
+      });
+
+      docSubjectInput.addEventListener('input', updateFileNameString);
+      infoCompany.addEventListener('input', updateFileNameString);
+
+      tabTable.addEventListener('click', () => {
+        tabTable.className = 'px-4 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200/80 shadow-xs flex items-center gap-2 cursor-pointer';
+        tabRaw.className = 'px-4 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent transition flex items-center gap-2 cursor-pointer';
+        panelTable.classList.remove('hidden');
+        panelRaw.classList.add('hidden');
+      });
+
+      tabRaw.addEventListener('click', () => {
+        tabRaw.className = 'px-4 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200/80 shadow-xs flex items-center gap-2 cursor-pointer';
+        tabTable.className = 'px-4 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent transition flex items-center gap-2 cursor-pointer';
+        panelRaw.classList.remove('hidden');
+        panelTable.classList.add('hidden');
+      });
+
+      addRowBtn.addEventListener('click', () => {
+        extractedItems.push({ name: '新規資材・品名', qty: 1, unit: '個', price: 0, amount: 0, note: '' });
+        renderItemsTable();
+        showToast('明細行を追加しました');
+      });
+
+      copyTableBtn.addEventListener('click', () => {
+        if (extractedItems.length === 0) {
+          showToast('コピーする明細データがありません', 'error');
+          return;
+        }
+        let textOutput = "商品名・規格\t数量\t単位\t単価\t金額\t備考\n";
+        extractedItems.forEach(item => {
+          textOutput += `${item.name || ''}\t${item.qty || 0}\t${item.unit || ''}\t${item.price || 0}\t${item.amount || 0}\t${item.note || ''}\n`;
+        });
+        copyToClipboard(textOutput);
+        showToast('クリップボードにコピーしました');
+      });
+
+      copyJsonBtn.addEventListener('click', () => {
+        const rawJsonTextarea = document.getElementById('raw-json-textarea');
+        if (!rawJsonTextarea.value) {
+          showToast('コピーするJSONデータがありません', 'error');
+          return;
+        }
+        copyToClipboard(rawJsonTextarea.value);
+        showToast('JSONレスポンスをコピーしました');
+      });
+
+      downloadCsvBtn.addEventListener('click', () => {
+        if (extractedItems.length === 0) {
+          showToast('出力するデータがありません', 'error');
+          return;
+        }
+        let csvContent = "\uFEFF商品名・規格,数量,単位,単価,金額,備考\n";
+        extractedItems.forEach(item => {
+          const safeName = `"${(item.name || '').replace(/"/g, '""')}"`;
+          const safeUnit = `"${(item.unit || '').replace(/"/g, '""')}"`;
+          const safeNote = `"${(item.note || '').replace(/"/g, '""')}"`;
+          csvContent += `${safeName},${item.qty || 0},${safeUnit},${item.price || 0},${item.amount || 0},${safeNote}\n`;
+        });
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `見積明細AI抽出_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast('CSVファイルをダウンロードしました');
+      });
+
+      processBtn.addEventListener('click', async () => {
+        if (!base64ImageForAI) {
+          showToast('ファイルが読み込まれていません', 'error');
+          return;
+        }
+        setAIProcessingState(true, 'Gemini 3 Flash に接続中...', '画像データをAI解析用フォーマットに整形しています');
+
+        try {
+          const base64Clean = base64ImageForAI.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
+          const systemPrompt = `
+あなたは日本の資材・工具・建材・ホームセンター向け見積書の解析エキスパートです。
+画像データから見積明細の表データを抽出し、指定のJSON形式で返却してください。
+0. 見積発行会社と見積日: 見積書を発行した会社名（店舗名など）を company に、日付を date (YYYY/MM/DD) に抽出。
+1. 商品名 (name): 品名・型番・規格を全角カタカナに正規化。
+2. 数量 (qty): 数値。不明時1。
+3. 単位 (unit): 単位。
+4. 単価 (price), 金額 (amount): 数値。
+5. 備考 (note): 補足。
+`;
+          const payload = {
+            contents: [{
+              role: "user",
+              parts: [
+                { text: "この見積書画像から会社名、日付、および明細項目を全て抽出してください。" },
+                { inlineData: { mimeType: "image/png", data: base64Clean } }
+              ]
+            }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: "OBJECT",
+                properties: {
+                  "company": { "type": "STRING" },
+                  "date": { "type": "STRING" },
+                  "items": {
+                    "type": "ARRAY",
+                    "items": {
+                      "type": "OBJECT",
+                      "properties": {
+                        "name": { "type": "STRING" },
+                        "qty": { "type": "NUMBER" },
+                        "unit": { "type": "STRING" },
+                        "price": { "type": "NUMBER" },
+                        "amount": { "type": "NUMBER" },
+                        "note": { "type": "STRING" }
+                      },
+                      "propertyOrdering": ["name", "qty", "unit", "price", "amount", "note"]
+                    }
+                  }
+                },
+                "propertyOrdering": ["company", "date", "items"]
+              }
+            },
+            systemInstruction: { parts: [{ text: systemPrompt }] }
+          };
+
+          const apiKey = customApiKey || "";
+          const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+          const response = await fetchWithRetry(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const result = await response.json();
+
+          if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
+            const jsonText = result.candidates[0].content.parts[0].text;
+            document.getElementById('raw-json-textarea').value = jsonText;
+
+            const parsedData = JSON.parse(jsonText);
+            extractedItems = parsedData.items || [];
+            extractedCompany = parsedData.company || "";
+            extractedDate = parsedData.date || "";
+
+            infoCompany.value = extractedCompany;
+            infoDate.value = extractedDate;
+            document.getElementById('basic-info-container').classList.remove('hidden');
+
+            renderItemsTable();
+            showToast(`Gemini AI により ${extractedItems.length} 件の明細を抽出しました`);
+          } else {
+            throw new Error('AIからの応答フォーマットが不正です');
+          }
+        } catch (err) {
+          console.error(err);
+          showToast('AI明細抽出に失敗しました: ' + err.message, 'error');
+        } finally {
+          setAIProcessingState(false);
+        }
+      });
+
+      executeMailBtn.addEventListener('click', async () => {
+        if (extractedItems.length === 0) {
+          showToast('申請する明細データがありません', 'error');
+          return;
+        }
+        const toEmail = document.getElementById('mail-to-input').value.trim();
+        if (!toEmail) {
+          showToast('送信先メールアドレスを入力してください', 'error');
+          return;
+        }
+
+        const originalText = executeMailBtn.innerHTML;
+        executeMailBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 送信中...';
+        executeMailBtn.disabled = true;
+        mailModal.classList.add('hidden');
+        showToast('クラウド上で申請処理・エクセル作成・画像アップロードを実行しています...', 'info');
+
+        try {
+          const totalAmountVal = extractedItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+          const payload = {
+            items: extractedItems,
+            totalAmount: totalAmountVal,
+            company: infoCompany.value.trim(),
+            date: infoDate.value.trim(),
+            toEmail: toEmail,
+            subject: mailSubjectInput.value.trim(),
+            docSubject: docSubjectInput.value.trim(),
+            fileName: document.getElementById('file-name-input').value.trim(),
+            purchaseReason: document.getElementById('purchase-reason-input').value,
+            body: document.getElementById('mail-body-input').value.trim(),
+            imageBase64: base64ImageForAI || ""
+          };
+
+          const response = await fetch(gasWebAppUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(payload)
+          });
+          const result = await response.json();
+          if (result.success) {
+            showToast('申請メールの送信（原本画像添付）が完了しました！');
+          } else {
+            throw new Error(result.error || 'GASエラー');
+          }
+        } catch (err) {
+          console.error("GAS連携エラー:", err);
+          showToast('GAS連携に失敗しました: ' + err.message, 'error');
+        } finally {
+          executeMailBtn.innerHTML = originalText;
+          executeMailBtn.disabled = false;
+        }
+      });
+    });
+
+    async function handleFileSelect(file) {
+      currentFile = file;
+      document.getElementById('file-name').textContent = file.name;
+      document.getElementById('file-info').classList.remove('hidden');
+      document.getElementById('canvas-placeholder').classList.add('hidden');
+
+      try {
+        if (file.type === 'application/pdf') {
+          document.getElementById('preview-page-info').textContent = 'PDF 高解像度生成中...';
+          base64ImageForAI = await renderPdfToHighResBase64(file);
+          document.getElementById('pdf-canvas').classList.remove('hidden');
+          document.getElementById('image-preview').classList.add('hidden');
+          document.getElementById('preview-page-info').textContent = 'PDF Page 1';
+        } else if (file.type.startsWith('image/')) {
+          document.getElementById('preview-page-info').textContent = '画像読み込み中...';
+          base64ImageForAI = await readImageWithOrientationCorrection(file);
+          const imgPrev = document.getElementById('image-preview');
+          imgPrev.src = base64ImageForAI;
+          imgPrev.classList.remove('hidden');
+          document.getElementById('pdf-canvas').classList.add('hidden');
+          document.getElementById('preview-page-info').textContent = `${file.type.split('/')[1].toUpperCase()} 画像`;
+        } else {
+          showToast('サポートされていないファイル形式です', 'error');
+          resetFileSelect();
+        }
+      } catch (err) {
+        console.error(err);
+        showToast('ファイルのプレビュー生成に失敗しました', 'error');
+      }
+    }
+
+    function resetFileSelect() {
+      currentFile = null;
+      base64ImageForAI = null;
+      document.getElementById('file-input').value = '';
+      document.getElementById('file-info').classList.add('hidden');
+      document.getElementById('canvas-placeholder').classList.remove('hidden');
+      document.getElementById('pdf-canvas').classList.add('hidden');
+      document.getElementById('image-preview').classList.add('hidden');
+      document.getElementById('preview-page-info').textContent = '未読込';
+    }
+
+    async function renderPdfToHighResBase64(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 2.2 });
+      const canvas = document.getElementById('pdf-canvas');
+      const context = canvas.getContext('2d');
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      await page.render({ canvasContext: context, viewport: viewport }).promise;
+      return canvas.toDataURL('image/png');
+    }
+
+    async function readImageWithOrientationCorrection(file) {
+      return new Promise(async (resolve) => {
+        try {
+          const bitmap = await createImageBitmap(file);
+          const MAX_WIDTH = 2500;
+          const MAX_HEIGHT = 2500;
+          let width = bitmap.width;
+          let height = bitmap.height;
+          if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+            const ratio = Math.min(MAX_WIDTH / width, MAX_HEIGHT / height);
+            width = Math.round(width * ratio);
+            height = Math.round(height * ratio);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(bitmap, 0, 0, width, height);
+          resolve(canvas.toDataURL(file.type || 'image/jpeg', 0.9));
+        } catch {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(file);
+        }
+      });
+    }
+
+    function renderItemsTable() {
+      const itemsTbody = document.getElementById('items-tbody');
+      const emptyRow = document.getElementById('empty-row');
+      itemsTbody.innerHTML = '';
+
+      if (extractedItems.length === 0) {
+        itemsTbody.appendChild(emptyRow);
+        document.getElementById('item-count').textContent = '0';
+        document.getElementById('total-amount').textContent = '¥0';
+        document.getElementById('basic-info-container').classList.add('hidden');
+        return;
+      }
+
+      let grandTotal = 0;
+      extractedItems.forEach((item, index) => {
+        const itemQty = Number(item.qty) || 0;
+        const itemPrice = Number(item.price) || 0;
+        const itemAmount = Number(item.amount) || (itemQty * itemPrice);
+        grandTotal += itemAmount;
+
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-50 transition-colors border-b border-slate-100';
+        tr.innerHTML = `
+          <td class="py-2.5 px-3 text-center font-mono text-xs text-slate-400">${index + 1}</td>
+          <td class="py-2.5 px-4"><input type="text" value="${escapeHtml(item.name || '')}" data-index="${index}" data-field="name" class="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:outline-none px-1 py-0.5 rounded text-slate-800 font-medium text-sm transition"></td>
+          <td class="py-2.5 px-3 text-right"><input type="number" value="${itemQty}" data-index="${index}" data-field="qty" class="w-full text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:outline-none px-1 py-0.5 rounded text-slate-700 font-mono text-xs transition"></td>
+          <td class="py-2.5 px-3 text-center"><input type="text" value="${escapeHtml(item.unit || '')}" data-index="${index}" data-field="unit" placeholder="個" class="w-full text-center bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:outline-none px-1 py-0.5 rounded text-slate-700 text-xs transition"></td>
+          <td class="py-2.5 px-4 text-right"><input type="number" value="${itemPrice}" data-index="${index}" data-field="price" class="w-full text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:outline-none px-1 py-0.5 rounded text-slate-700 font-mono text-xs transition"></td>
+          <td class="py-2.5 px-4 text-right font-mono font-semibold text-slate-900 text-sm">¥${itemAmount.toLocaleString()}</td>
+          <td class="py-2.5 px-4"><input type="text" value="${escapeHtml(item.note || '')}" data-index="${index}" data-field="note" placeholder="備考" class="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:outline-none px-1 py-0.5 rounded text-slate-600 text-xs transition"></td>
+          <td class="py-2.5 px-3 text-center"><button onclick="deleteRow(${index})" class="text-slate-300 hover:text-red-500 p-1 transition rounded-lg hover:bg-red-50 cursor-pointer"><i class="fa-regular fa-trash-can"></i></button></td>
+        `;
+        itemsTbody.appendChild(tr);
+      });
+
+      document.getElementById('item-count').textContent = extractedItems.length;
+      document.getElementById('total-amount').textContent = `¥${grandTotal.toLocaleString()}`;
+
+      itemsTbody.querySelectorAll('input').forEach(input => {
+        input.addEventListener('change', (e) => {
+          const idx = parseInt(e.target.dataset.index);
+          const field = e.target.dataset.field;
+          let val = e.target.value;
+          if (field === 'qty' || field === 'price') val = parseFloat(val) || 0;
+          extractedItems[idx][field] = val;
+          if (field === 'qty' || field === 'price') {
+            extractedItems[idx].amount = (extractedItems[idx].qty || 0) * (extractedItems[idx].price || 0);
+          }
+          renderItemsTable();
+        });
+      });
+    }
+
+    window.deleteRow = function(index) {
+      extractedItems.splice(index, 1);
+      renderItemsTable();
+      showToast('行を削除しました');
+    };
+
+    function initializeDefaultMailForm() {
+      const companyVal = document.getElementById('info-company').value.trim() || '見積先未設定';
+      const now = new Date();
+      const yy = String(now.getFullYear()).slice(-2);
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      const timestamp = yy + mm + dd;
+      
+      let firstItemName = '商品名未設定';
+      if (extractedItems.length > 0 && extractedItems[0].name) {
+        firstItemName = extractedItems[0].name;
+      }
+      const defaultDocSubject = `${firstItemName} 他`;
+
+      document.getElementById('mail-subject-input').value = `【資材購買の要請】${companyVal}`;
+      document.getElementById('doc-subject-input').value = defaultDocSubject;
+      document.getElementById('file-name-input').value = `${timestamp}【発注依頼書】${companyVal} ${defaultDocSubject}.xlsx`;
+      
+      const totalAmountVal = extractedItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+      document.getElementById('mail-body-input').value = `お疲れ様です。\n\n以下の通り、資材の購買申請をお願いいたします。\n\n■ 見積先: ${companyVal}\n■ 件名: ${defaultDocSubject}\n■ 合計金額: ¥${totalAmountVal.toLocaleString()}\n\n詳細な明細については、添付の発注依頼書(Excel)および原本画像をご確認ください。\n\nよろしくお願いいたします。`;
+    }
+
+    function updateFileNameString() {
+      const companyVal = document.getElementById('info-company').value.trim() || '見積先未設定';
+      const docSubVal = document.getElementById('doc-subject-input').value.trim() || '件名未設定';
+      const now = new Date();
+      const yy = String(now.getFullYear()).slice(-2);
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      document.getElementById('file-name-input').value = `${yy}${mm}${dd}【発注依頼書】${companyVal} ${docSubVal}.xlsx`;
+    }
+
+    async function fetchWithRetry(url, options, maxRetries = 3) {
+      let delay = 1000;
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          const res = await fetch(url, options);
+          if (res.ok) return res;
+          if (res.status === 429) {
+            await new Promise(r => setTimeout(r, delay));
+            delay *= 2;
+            continue;
+          }
+          const errBody = await res.text();
+          throw new Error(`API Error (${res.status}): ${errBody}`);
+        } catch (err) {
+          if (i === maxRetries - 1) throw err;
+          await new Promise(r => setTimeout(r, delay));
+          delay *= 2;
+        }
+      }
+    }
+
+    function setAIProcessingState(isProcessing, title = '', desc = '') {
+      const card = document.getElementById('ai-status-card');
+      const pBtn = document.getElementById('process-btn');
+      if (isProcessing) {
+        card.classList.remove('hidden');
+        document.getElementById('ai-status-title').textContent = title;
+        pBtn.disabled = true;
+        pBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      } else {
+        card.classList.add('hidden');
+        pBtn.disabled = false;
+        pBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
+    }
+
+    function updateApiKeyUI() {
+      const statusEl = document.getElementById('api-key-status');
+      const btnEl = document.getElementById('open-api-modal-btn');
+      if (customApiKey) {
+        statusEl.textContent = 'API Key (カスタム)';
+        btnEl.classList.add('border-amber-500/80', 'bg-slate-800');
+      } else {
+        statusEl.textContent = 'API Key 設定';
+        btnEl.classList.remove('border-amber-500/80');
+      }
+    }
+
+    function copyToClipboard(text) {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+    }
+
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toast-msg');
+      const toastIcon = document.getElementById('toast-icon');
+      toastMsg.textContent = message;
+      toastIcon.className = type === 'error' ? 'fa-solid fa-circle-exclamation text-red-400 text-lg' : 'fa-solid fa-circle-check text-emerald-400 text-lg';
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      toast.classList.add('translate-y-0', 'opacity-100');
+      setTimeout(() => {
+        toast.classList.remove('translate-y-0', 'opacity-100');
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 3200);
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+  </script>
+</body>
+</html>
