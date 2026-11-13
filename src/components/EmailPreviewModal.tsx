@@ -11,10 +11,9 @@ import {
   Sparkles,
   CheckCircle2,
   AlertCircle,
-  Copy,
-  Settings as SettingsIcon
+  Copy
 } from 'lucide-react';
-import { MediaItem, AppSettings } from '../types';
+import { MediaItem, AppSettings, DEFAULT_SETTINGS } from '../types';
 import { prepareMediaForUpload, fileToBase64 } from '../utils/photoProcessor';
 
 interface EmailPreviewModalProps {
@@ -22,16 +21,17 @@ interface EmailPreviewModalProps {
   settings: AppSettings;
   onClose: () => void;
   onOpenAlbum: () => void;
+  uploadedDriveUrl?: string | null;
 }
 
 export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
-  mediaItems,
+  mediaItems = [],
   settings,
   onClose,
-  onOpenAlbum,
+  uploadedDriveUrl,
 }) => {
-  const photoItems = mediaItems.filter((m) => m.type === 'image');
-  const videoItems = mediaItems.filter((m) => m.type === 'video');
+  const photoItems = (mediaItems || []).filter((m) => m?.type === 'image');
+  const videoItems = (mediaItems || []).filter((m) => m?.type === 'video');
 
   const photoCount = photoItems.length;
   const videoCount = videoItems.length;
@@ -41,41 +41,62 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
   const shouldAttachDirectly = photoCount > 0 && photoCount <= 3 && videoCount === 0;
 
   // Initial Subject: description of the first media item
-  const initialSubject =
-    mediaItems.length > 0 && mediaItems[0].description.trim()
+  const firstDesc =
+    mediaItems.length > 0 && typeof mediaItems[0]?.description === 'string'
       ? mediaItems[0].description.trim()
-      : '現場報告';
+      : '';
+  const initialSubject = firstDesc || (settings?.subjectPrefix ? `${settings.subjectPrefix} 現場報告` : '現場報告');
 
   // Construct initial body based on the rule
   const generateInitialBody = () => {
-    let body = `${settings.greetingHeader}\n${settings.albumUrl}\n\n`;
+    const greeting = settings?.greetingHeader || DEFAULT_SETTINGS.greetingHeader;
+    const driveUrl = (settings?.googleDriveUrl || '').trim();
+    let body = `${greeting}\n`;
+
+    if (driveUrl && !greeting.includes(driveUrl)) {
+      body += `写真のリンク先\n${driveUrl}\n`;
+    }
+    if (uploadedDriveUrl && !greeting.includes(uploadedDriveUrl) && uploadedDriveUrl !== driveUrl) {
+      body += `アップロード先フォルダ: ${uploadedDriveUrl}\n`;
+    }
+    body += `\n`;
 
     if (!shouldAttachDirectly) {
       if (videoCount > 0 && photoCount >= 4) {
-        body += `※写真4枚以上および動画が含まれるため、上記Googleフォト共有アルバムにて報告いたします。\n\n`;
+        body += `※写真4枚以上および動画が含まれるため、上記リンク先にて報告いたします。\n\n`;
       } else if (videoCount > 0) {
-        body += `※動画が含まれるため、上記Googleフォト共有アルバムにて報告いたします。\n\n`;
+        body += `※動画が含まれるため、上記リンク先にて報告いたします。\n\n`;
       } else if (photoCount >= 4) {
-        body += `※写真4枚以上のため、上記Googleフォト共有アルバムにて報告いたします。\n\n`;
+        body += `※写真4枚以上のため、上記リンク先にて報告いたします。\n\n`;
       }
     } else {
       body += `※画像（${photoCount}枚）を添付しております。\n\n`;
     }
 
     body += `【メディア報告詳細】\n`;
-    mediaItems.forEach((item, index) => {
-      const typeLabel = item.type === 'image' ? '写真' : '動画';
-      const desc = item.description.trim() ? item.description.trim() : '（説明なし）';
-      body += `${index + 1}. [${typeLabel}] ${desc} (${item.fileName})\n`;
+    (mediaItems || []).forEach((item, index) => {
+      const typeLabel = item?.type === 'image' ? '写真' : '動画';
+      const desc =
+        typeof item?.description === 'string' && item.description.trim()
+          ? item.description.trim()
+          : '（説明なし）';
+      const fileName = item?.fileName || `media_${index + 1}`;
+      body += `${index + 1}. [${typeLabel}] ${desc} (${fileName})\n`;
     });
 
-    body += `\n-------------------------\n差出人: ${settings.senderName}\n送信日時: ${new Date().toLocaleString('ja-JP')}`;
+    const senderDisplay =
+      [settings?.senderName, settings?.senderEmail ? `<${settings.senderEmail}>` : '']
+        .filter((s) => s && s.trim() && s.trim() !== '-')
+        .join(' ') || '-';
+    body += `\n-------------------------\n差出人: ${senderDisplay}\n送信日時: ${new Date().toLocaleString('ja-JP')}`;
     return body;
   };
 
-  const [toEmail, setToEmail] = useState(settings.toEmail);
-  const [ccEmails, setCcEmails] = useState(settings.ccEmails);
-  const [senderName, setSenderName] = useState(settings.senderName);
+  const [toEmail, setToEmail] = useState(settings?.toEmail || 'marine_fusaki-resort@iconia.co.jp');
+  const [ccEmails, setCcEmails] = useState(settings?.ccEmails || '');
+  const [bccEmails, setBccEmails] = useState(settings?.bccEmails || '');
+  const [senderEmail, setSenderEmail] = useState(settings?.senderEmail || '');
+  const [senderName, setSenderName] = useState(settings?.senderName || '');
   const [subject, setSubject] = useState(initialSubject);
   const [body, setBody] = useState(generateInitialBody);
   const [copied, setCopied] = useState(false);
@@ -90,41 +111,79 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
   const [sentAttachmentCount, setSentAttachmentCount] = useState<number>(0);
 
   // Check if GAS URL is configured
+  const rawGasUrl = typeof settings?.gasMailUrl === 'string' ? settings.gasMailUrl.trim() : '';
   const isGasConfigured = Boolean(
-    settings.gasMailUrl && settings.gasMailUrl.trim().startsWith('https://script.google.com/macros/s/')
+    rawGasUrl && rawGasUrl.startsWith('https://script.google.com/macros/s/')
   );
 
-  // 1. Send via Gmail (宛先・CC・件名・本文100%完全自動入力)
+  // Resolve BCC for mailto / web Gmail
+  const getResolvedBccForMailto = () => {
+    const rawBcc = (bccEmails || '').trim();
+    if (!rawBcc) return '';
+    if (rawBcc === '（自分）' || rawBcc === '(自分)') {
+      const sEmail = (senderEmail || '').trim();
+      return sEmail && sEmail !== '-' && sEmail.includes('@') ? sEmail : '';
+    }
+    return rawBcc;
+  };
+
+  // 1. Send via Gmail (宛先・CC・BCC・件名・本文100%完全自動入力)
   const handleOpenGmailWithAllFields = async () => {
-    // Copy body to clipboard as well for safety
     try {
       await navigator.clipboard.writeText(body);
     } catch {
       // ignore
     }
 
-    const encodedTo = encodeURIComponent(toEmail.trim());
-    const encodedCc = encodeURIComponent(ccEmails.trim());
-    const encodedSubject = encodeURIComponent(subject.trim());
-    const encodedBody = encodeURIComponent(body.trim());
+    const safeTo = (toEmail || '').trim();
+    const safeCc = (ccEmails || '').trim();
+    const safeBcc = getResolvedBccForMailto();
+    const safeSubject = (subject || '現場報告').trim();
+    const safeBody = (body || '').trim();
 
-    // Construct mailto with CC
-    const mailtoUrl = `mailto:${encodedTo}?cc=${encodedCc}&subject=${encodedSubject}&body=${encodedBody}`;
+    // Encode mailto manually so spaces remain %20 instead of +
+    const queryParts: string[] = [];
+    if (safeCc) queryParts.push(`cc=${encodeURIComponent(safeCc)}`);
+    if (safeBcc) queryParts.push(`bcc=${encodeURIComponent(safeBcc)}`);
+    queryParts.push(`subject=${encodeURIComponent(safeSubject)}`);
+    queryParts.push(`body=${encodeURIComponent(safeBody)}`);
+
+    const mailtoUrl = `mailto:${encodeURIComponent(safeTo)}?${queryParts.join('&')}`;
 
     setGmailToast(true);
     setTimeout(() => setGmailToast(false), 3000);
 
-    // Trigger mail client
-    window.location.href = mailtoUrl;
+    try {
+      const a = document.createElement('a');
+      a.href = mailtoUrl;
+      a.target = '_top';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {
+      window.location.href = mailtoUrl;
+    }
   };
 
   // Alternative Web Gmail open
   const handleOpenWebGmail = () => {
-    const encodedTo = encodeURIComponent(toEmail.trim());
-    const encodedCc = encodeURIComponent(ccEmails.trim());
-    const encodedSubject = encodeURIComponent(subject.trim());
-    const encodedBody = encodeURIComponent(body.trim());
-    const webGmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodedTo}&cc=${encodedCc}&su=${encodedSubject}&body=${encodedBody}`;
+    const safeTo = (toEmail || '').trim();
+    const safeCc = (ccEmails || '').trim();
+    const safeBcc = getResolvedBccForMailto();
+    const safeSubject = (subject || '現場報告').trim();
+    const safeBody = (body || '').trim();
+
+    const queryParts = [
+      'view=cm',
+      'fs=1',
+      `to=${encodeURIComponent(safeTo)}`,
+    ];
+    if (safeCc) queryParts.push(`cc=${encodeURIComponent(safeCc)}`);
+    if (safeBcc) queryParts.push(`bcc=${encodeURIComponent(safeBcc)}`);
+    queryParts.push(`su=${encodeURIComponent(safeSubject)}`);
+    queryParts.push(`body=${encodeURIComponent(safeBody)}`);
+
+    const webGmailUrl = `https://mail.google.com/mail/?${queryParts.join('&')}`;
     window.open(webGmailUrl, '_blank', 'noopener,noreferrer');
   };
 
@@ -145,7 +204,7 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
       // 1. Process files with description caption stamps & safe filenames
       const { files, summaryText } = await prepareMediaForUpload(mediaItems, {
         burnCaption: true,
-        senderName: senderName,
+        senderName: senderName || '自分',
       });
 
       // 2. Prepare attachments if rule applies (photos <= 3 and video === 0)
@@ -168,16 +227,19 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
 
       // 3. Construct payload
       const mailPayload = {
-        to: toEmail.trim(),
-        cc: ccEmails.trim(),
-        subject: subject.trim(),
-        body: body.trim(),
-        senderName: senderName.trim(),
-        albumUrl: settings.albumUrl,
+        to: (toEmail || '').trim(),
+        cc: (ccEmails || '').trim(),
+        bcc: (bccEmails || '').trim(),
+        subject: (subject || '現場報告').trim(),
+        body: (body || '').trim(),
+        senderName: (senderName || '').trim(),
+        senderEmail: (senderEmail || '').trim(),
+        albumUrl: settings?.albumUrl || '',
+        googleDriveUrl: settings?.googleDriveUrl || '',
         attachments: attachmentPayloads,
       };
 
-      const gasUrl = settings.gasMailUrl.trim();
+      const gasUrl = rawGasUrl;
       let sentSuccessfully = false;
       let failureReason = '';
 
@@ -202,7 +264,6 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
           failureReason = errData.error || `HTTPエラー ${localRes.status}`;
         }
       } catch (e: any) {
-        // Fallback to direct client call if server route unavailable (e.g. GitHub Pages)
         failureReason = e?.message || '通信エラー';
       }
 
@@ -225,11 +286,12 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
         try {
           jsonResult = JSON.parse(text);
         } catch {
-          if (text.includes('success')) {
-            jsonResult = { success: true };
-          } else {
-            throw new Error(`GAS応答の解析失敗: ${text.slice(0, 100)}`);
-          }
+          const isHtmlLogin = text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('accounts.google.com');
+          throw new Error(
+            isHtmlLogin
+              ? 'GASがHTMLページを返しました。GASデプロイ設定の「アクセスできるユーザー」が「全員 (Anyone)」になっているか確認してください。'
+              : `GAS応答の解析失敗: ${text.slice(0, 100)}`
+          );
         }
 
         if (jsonResult.success === true) {
@@ -243,7 +305,7 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
         setSentTimestamp(new Date().toLocaleTimeString('ja-JP'));
         setSendSuccess(true);
         try {
-          await navigator.clipboard.writeText(`${settings.albumUrl}\n\n${summaryText}`);
+          await navigator.clipboard.writeText(`${settings?.albumUrl || ''}\n\n${summaryText}`);
         } catch {
           // ignore
         }
@@ -262,7 +324,7 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
   };
 
   const handleCopyAll = async () => {
-    const fullText = `宛先: ${toEmail}\nCC: ${ccEmails}\n差出人: ${senderName}\n件名: ${subject}\n\n${body}`;
+    const fullText = `宛先: ${toEmail}\nCC: ${ccEmails}\nBCC: ${bccEmails}\n差出人: ${senderName} ${senderEmail ? `<${senderEmail}>` : ''}\n件名: ${subject}\n\n${body}`;
     try {
       await navigator.clipboard.writeText(fullText);
       setCopied(true);
@@ -275,7 +337,7 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
   const handleDownloadFiles = async () => {
     const { files } = await prepareMediaForUpload(mediaItems, {
       burnCaption: true,
-      senderName,
+      senderName: senderName || '自分',
     });
     files.forEach((file) => {
       const url = URL.createObjectURL(file);
@@ -290,8 +352,12 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-2 sm:p-4 overflow-y-auto">
-      <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl text-slate-100 max-h-[96vh] flex flex-col my-auto">
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-2 sm:p-4 overflow-y-auto"
+    >
+      <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl text-slate-100 max-h-[96vh] flex flex-col my-auto relative">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-2">
@@ -357,21 +423,21 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
                 <div className="p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs space-y-1.5 animate-in fade-in">
                   <div className="flex items-center gap-1.5 font-bold">
                     <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                    <span>直接送信エラー</span>
+                    <span>送信案内</span>
                   </div>
                   <p className="text-[11px] leading-tight text-slate-200">{sendError}</p>
                   <button
                     type="button"
                     onClick={handleOpenGmailWithAllFields}
-                    className="mt-1 flex items-center gap-1 py-1 px-2 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] transition cursor-pointer"
+                    className="mt-1 flex items-center gap-1 py-1 px-2.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition cursor-pointer"
                   >
-                    <Mail className="w-3 h-3" />
+                    <Mail className="w-3.5 h-3.5" />
                     <span>確実に届く「Gmailで送信」に切り替える</span>
                   </button>
                 </div>
               )}
 
-              {/* Status Banner: Attachment vs Google Photos Link */}
+              {/* Status Banner: Attachment vs Link */}
               <div
                 className={`p-2 rounded-lg border text-[11px] flex items-center gap-2 ${
                   shouldAttachDirectly
@@ -387,25 +453,42 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
                     </span>
                   ) : (
                     <span>
-                      写真{photoCount}枚・動画{videoCount}件のため、<strong>Googleフォト共有リンク</strong>を本文に記載して報告します。
+                      写真{photoCount}枚・動画{videoCount}件のため、<strong>Googleドライブ・共有リンク</strong>を本文に記載して報告します。
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* Sender Name */}
+              {/* Sender Name & Sender Email */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[10px] font-semibold text-slate-300 mb-0.5">
-                    差出人
+                    差出人名
                   </label>
                   <input
                     type="text"
                     value={senderName}
                     onChange={(e) => setSenderName(e.target.value)}
+                    placeholder="-"
                     className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
                   />
                 </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-300 mb-0.5">
+                    差出人アドレス
+                  </label>
+                  <input
+                    type="text"
+                    value={senderEmail}
+                    onChange={(e) => setSenderEmail(e.target.value)}
+                    placeholder="-"
+                    className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-sky-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* To Email & BCC */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[10px] font-semibold text-slate-300 mb-0.5">
                     宛先 (To)
@@ -418,17 +501,30 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
                     required
                   />
                 </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-300 mb-0.5">
+                    BCC
+                  </label>
+                  <input
+                    type="text"
+                    value={bccEmails}
+                    onChange={(e) => setBccEmails(e.target.value)}
+                    placeholder="なし"
+                    className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-sky-500 font-mono"
+                  />
+                </div>
               </div>
 
               {/* CC */}
               <div>
                 <label className="block text-[10px] font-semibold text-slate-300 mb-0.5">
-                  CC (自動挿入済み)
+                  CC
                 </label>
                 <textarea
                   rows={2}
                   value={ccEmails}
                   onChange={(e) => setCcEmails(e.target.value)}
+                  placeholder="なし"
                   className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-sky-500 font-mono leading-tight"
                 />
               </div>
@@ -442,7 +538,7 @@ export const EmailPreviewModal: React.FC<EmailPreviewModalProps> = ({
                   type="text"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-1.5 text-xs text-slate-100 font-medium focus:outline-none focus:border-sky-500"
+                  className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-100 font-medium focus:outline-none focus:border-sky-500"
                 />
               </div>
 

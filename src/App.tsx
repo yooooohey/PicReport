@@ -27,7 +27,7 @@ import {
   X
 } from 'lucide-react';
 
-import { MediaItem, AppSettings, DEFAULT_SETTINGS, APP_VERSION } from './types';
+import { MediaItem, AppSettings, DEFAULT_SETTINGS, APP_VERSION, DEPRECATED_PLACEHOLDER_GAS_URL } from './types';
 import { MediaUploader } from './components/MediaUploader';
 import { MediaItemCard } from './components/MediaItemCard';
 import { EmailPreviewModal } from './components/EmailPreviewModal';
@@ -37,15 +37,37 @@ import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { prepareMediaForUpload } from './utils/photoProcessor';
 
-const SETTINGS_STORAGE_KEY = 'photo_video_report_settings_v1';
+const SETTINGS_STORAGE_KEY = 'photo_video_report_settings_v2';
+const LEGACY_SETTINGS_KEY = 'photo_video_report_settings_v1';
 
 export default function App() {
-  // Settings loaded from localStorage or default
+  // Settings loaded from localStorage v2 (or migrated from v1 preserving custom GAS URL)
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
-      const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      if (stored) {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+      const storedV2 = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (storedV2) {
+        const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(storedV2) };
+        if (!parsed.gasMailUrl || parsed.gasMailUrl === DEPRECATED_PLACEHOLDER_GAS_URL) {
+          parsed.gasMailUrl = DEFAULT_SETTINGS.gasMailUrl;
+          localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(parsed));
+        }
+        return parsed;
+      }
+
+      const storedV1 = localStorage.getItem(LEGACY_SETTINGS_KEY);
+      if (storedV1) {
+        const legacy = JSON.parse(storedV1);
+        const validGasUrl =
+          legacy?.gasMailUrl && legacy.gasMailUrl !== DEPRECATED_PLACEHOLDER_GAS_URL
+            ? legacy.gasMailUrl
+            : DEFAULT_SETTINGS.gasMailUrl;
+        const migrated: AppSettings = {
+          ...DEFAULT_SETTINGS,
+          gasMailUrl: validGasUrl,
+          albumUrl: legacy?.albumUrl || DEFAULT_SETTINGS.albumUrl,
+        };
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(migrated));
+        return migrated;
       }
     } catch (e) {
       console.warn('Failed to load settings:', e);
@@ -55,6 +77,7 @@ export default function App() {
 
   // Media items state
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
+  const [uploadedDriveUrl, setUploadedDriveUrl] = useState<string | null>(null);
 
   // Modals state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -431,34 +454,30 @@ export default function App() {
             </div>
           </div>
 
-          {/* Action Buttons: 1-Tap Google Photos Share & Report Email */}
+          {/* Action Buttons: Standalone Cloud Upload & Direct Email */}
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* BUTTON 1: 1-Tap Google Photos Share (NO ALBUM OPENING) */}
+            {/* BUTTON 1: Standalone Cloud Upload / Google Photos Share */}
             <button
               type="button"
-              onClick={handleQuickGooglePhotosShare}
-              disabled={mediaItems.length === 0 || isSharingPhotos}
+              onClick={() => setShowUploadModal(true)}
+              disabled={mediaItems.length === 0}
               className="flex items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 border border-sky-500/40 disabled:opacity-30 disabled:cursor-not-allowed text-sky-400 font-bold text-xs active:scale-95 transition cursor-pointer shadow-sm"
-              title="アルバムを開くことなくGoogleフォトへ直接1タップ共有"
+              title="クラウド（Googleドライブ直接保存・Googleフォト共有）"
             >
-              {isSharingPhotos ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Share2 className="w-3.5 h-3.5" />
-              )}
-              <span>Googleフォト共有</span>
+              <UploadCloud className="w-3.5 h-3.5" />
+              <span>クラウド共有</span>
             </button>
 
-            {/* BUTTON 2: Report Email Send Modal */}
+            {/* BUTTON 2: Direct Email Send Modal */}
             <button
               type="button"
               onClick={() => setShowEmailModal(true)}
               disabled={mediaItems.length === 0}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-sm shadow-md shadow-sky-600/30 active:scale-95 transition cursor-pointer"
-              title="報告メールを作成・送信（Gmail・GAS）"
+              title="報告メールを作成・直接送信"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>報告メール送信</span>
+              <span>直接メールを送信</span>
             </button>
           </div>
         </div>
@@ -479,6 +498,7 @@ export default function App() {
           settings={settings}
           onClose={() => setShowEmailModal(false)}
           onOpenAlbum={handleOpenGooglePhotosAlbum}
+          uploadedDriveUrl={uploadedDriveUrl}
         />
       )}
 
@@ -488,6 +508,8 @@ export default function App() {
           settings={settings}
           onClose={() => setShowUploadModal(false)}
           onOpenAlbum={handleOpenGooglePhotosAlbum}
+          onOpenSettings={() => setShowSettingsModal(true)}
+          onUploadedDriveFolder={(url) => setUploadedDriveUrl(url)}
         />
       )}
     </div>

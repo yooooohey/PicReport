@@ -139,7 +139,7 @@ async function startServer() {
   // API endpoint: Direct Email Sending via GAS Web App Proxy
   app.post('/api/send-mail', async (req, res) => {
     try {
-      const { to, cc, subject, body, senderName, attachments, gasUrl } = req.body;
+      const { to, cc, bcc, subject, body, senderName, senderEmail, attachments, gasUrl } = req.body;
       const targetUrl = typeof gasUrl === 'string' ? gasUrl.trim() : '';
 
       if (!targetUrl || !targetUrl.startsWith('https://script.google.com/macros/s/')) {
@@ -149,7 +149,7 @@ async function startServer() {
         });
       }
 
-      if (!to) {
+      if (!to && req.body.action !== 'upload_to_album') {
         return res.status(400).json({
           success: false,
           error: '宛先メールアドレスが指定されていません。',
@@ -157,11 +157,18 @@ async function startServer() {
       }
 
       const payload = {
-        to,
+        action: req.body.action || 'send_mail',
+        albumUrl: req.body.albumUrl || '',
+        googleDriveUrl: req.body.googleDriveUrl || '',
+        driveFolderId: req.body.driveFolderId || '',
+        mediaItems: req.body.mediaItems || [],
+        to: to || '',
         cc: cc || '',
+        bcc: bcc || '',
         subject: subject || '現場報告',
         body: body || '',
-        senderName: senderName || '報告カメラ',
+        senderName: senderName || '',
+        senderEmail: senderEmail || '',
         attachments: attachments || [],
       };
 
@@ -169,7 +176,7 @@ async function startServer() {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(45000),
       });
 
       if (!response.ok) {
@@ -185,15 +192,13 @@ async function startServer() {
       try {
         result = JSON.parse(text);
       } catch {
-        // If response is not JSON, check if it contains success message or error HTML
-        if (text.includes('success') && !text.includes('error')) {
-          result = { success: true, message: 'メール送信が完了しました' };
-        } else {
-          return res.status(502).json({
-            success: false,
-            error: `GASレスポンスの解析に失敗しました: ${text.slice(0, 200)}`,
-          });
-        }
+        const isHtmlLogin = text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('accounts.google.com');
+        return res.status(502).json({
+          success: false,
+          error: isHtmlLogin
+            ? 'GASがHTML画面（ログイン画面またはエラーページ）を返しました。GASデプロイ設定の「アクセスできるユーザー」が「全員 (Anyone)」になっているか確認してください。'
+            : `GASレスポンスの解析に失敗しました: ${text.slice(0, 200)}`,
+        });
       }
 
       return res.json(result);

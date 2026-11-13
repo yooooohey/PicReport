@@ -14,8 +14,9 @@ import {
   Copy,
   Check,
   Loader2,
-  AlertCircle,
-  HelpCircle
+  HelpCircle,
+  HardDrive,
+  AtSign
 } from 'lucide-react';
 import { AppSettings, DEFAULT_SETTINGS, TEST_SETTINGS, APP_VERSION } from '../types';
 
@@ -26,7 +27,8 @@ interface SettingsModalProps {
 }
 
 const SAMPLE_GAS_CODE = `/**
- * PicReport用 Google Apps Script (GAS) メール直接送信スクリプト
+ * PicReport用 Google Apps Script (GAS)
+ * 【メール直接送信】＆【指定Googleドライブフォルダ直接アップロード】完全対応スクリプト
  * 
  * 【導入手順 (2分)】
  * 1. https://script.google.com/ を開く
@@ -42,11 +44,79 @@ const SAMPLE_GAS_CODE = `/**
 function doPost(e) {
   try {
     var data = JSON.parse(e.postData.contents);
+    var action = data.action || 'send_mail';
+
+    // 1. 指定されたGoogleドライブ共有フォルダへの直接アップロード
+    if (action === 'upload_to_album' || data.mediaItems) {
+      var folder = null;
+      if (data.driveFolderId) {
+        try {
+          folder = DriveApp.getFolderById(data.driveFolderId);
+        } catch (err) {
+          // フォルダIDにアクセスできない場合はフォールバック
+        }
+      }
+      if (!folder) {
+        var folderName = 'PicReport_現場共有アルバム';
+        var folders = DriveApp.getFoldersByName(folderName);
+        folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+        folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      }
+
+      var items = data.mediaItems || [];
+      var uploaded = 0;
+      var uploadedNames = [];
+      items.forEach(function(item, idx) {
+        if (item.base64) {
+          var cleanBase64 = item.base64.replace(/^data:[^;]+;base64,/, '');
+          var fileName = item.fileName || ('photo_' + (idx + 1) + '.jpg');
+          var blob = Utilities.newBlob(
+            Utilities.base64Decode(cleanBase64),
+            item.mimeType || 'image/jpeg',
+            fileName
+          );
+          var file = folder.createFile(blob);
+          if (item.description) {
+            file.setDescription(item.description);
+          }
+          uploadedNames.push(fileName);
+          uploaded++;
+        }
+      });
+
+      if (uploaded === 0) {
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false,
+          error: 'アップロード可能なメディアデータが含まれていませんでした。'
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: true, 
+        uploadedCount: uploaded,
+        uploadedNames: uploadedNames,
+        message: 'Googleドライブへ直接アップロード完了 (' + uploaded + '件)',
+        folderUrl: folder.getUrl()
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 2. メール直接送信処理
     var to = data.to;
     var cc = data.cc || '';
+    var bccRaw = (data.bcc || '').trim();
     var subject = data.subject || '現場報告';
     var body = data.body || '';
-    var senderName = data.senderName || '現場報告';
+    var senderName = (data.senderName || '').trim();
+    var senderEmail = (data.senderEmail || '').trim();
+    var myEmail = Session.getEffectiveUser().getEmail();
+
+    // 「（自分）」がBCC指定された場合は自分のアドレスを解決
+    var bcc = '';
+    if (bccRaw === '（自分）' || bccRaw === '(自分)' || bccRaw.toLowerCase() === 'self') {
+      bcc = senderEmail || myEmail;
+    } else {
+      bcc = bccRaw;
+    }
     
     // 画像添付の展開処理 (最大3枚)
     var attachments = [];
@@ -64,8 +134,20 @@ function doPost(e) {
       });
     }
 
-    var options = { name: senderName };
+    var options = {};
+    if (senderName && senderName !== '-') options.name = senderName;
+    if (senderEmail && senderEmail !== '-') {
+      options.replyTo = senderEmail;
+      // 送信元エイリアスとして登録済みのアドレスならfromにも指定
+      try {
+        var aliases = GmailApp.getAliases();
+        if (senderEmail === myEmail || aliases.indexOf(senderEmail) !== -1) {
+          options.from = senderEmail;
+        }
+      } catch (e) {}
+    }
     if (cc) options.cc = cc;
+    if (bcc) options.bcc = bcc;
     if (attachments.length > 0) options.attachments = attachments;
 
     // Gmailから実際に送信
@@ -86,9 +168,10 @@ function doPost(e) {
 function doGet(e) {
   return ContentService.createTextOutput(JSON.stringify({ 
     status: 'ok', 
-    service: 'PicReport Mailer Service' 
+    service: 'PicReport Mailer & Drive Uploader Service' 
   })).setMimeType(ContentService.MimeType.JSON);
-}`;
+}
+`;
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, onClose }) => {
   const [form, setForm] = useState<AppSettings>({ ...settings });
@@ -122,6 +205,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
     setNoticeMessage('テスト値（yooooohey@gmail.com）に切り替えました');
     setGasTestResult(null);
     setTimeout(() => setNoticeMessage(null), 2500);
+  };
+
+  const handleOpenDriveUrl = () => {
+    if (form.googleDriveUrl.trim()) {
+      window.open(form.googleDriveUrl.trim(), '_blank', 'noopener,noreferrer');
+    }
   };
 
   const handleTestAlbumUrl = () => {
@@ -164,16 +253,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
     const testPayload = {
       to: form.toEmail || 'yooooohey@gmail.com',
       cc: '',
+      bcc: form.bccEmails || '',
       subject: '【PicReport接続テスト】メール送信確認',
       body: `PicReportからの接続テストメールです。\n送信日時: ${new Date().toLocaleString('ja-JP')}\n\nこのメールが届いていれば、アプリ単体での直接メール送信が正常に稼働しています！`,
       senderName: form.senderName || 'PicReport テスト',
+      senderEmail: form.senderEmail || '',
       attachments: [],
     };
 
     try {
-      // Try local proxy if running on fullstack, otherwise direct POST
       let resultSuccess = false;
-      let resultMsg = '';
 
       try {
         const localRes = await fetch('/api/send-mail', {
@@ -184,9 +273,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
         });
         if (localRes.ok) {
           const resData = await localRes.json();
-          if (resData.success) {
+          if (resData.success === true) {
             resultSuccess = true;
-            resultMsg = resData.message || '送信成功';
           } else {
             throw new Error(resData.error || 'エラー応答');
           }
@@ -194,7 +282,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
           throw new Error(`サーバー応答 ${localRes.status}`);
         }
       } catch {
-        // Fallback to client-side direct request (e.g. GitHub Pages)
         const gasRes = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -203,20 +290,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
         });
 
         const text = await gasRes.text();
-        let jsonRes;
+        let jsonRes: { success?: boolean; message?: string; error?: string };
         try {
           jsonRes = JSON.parse(text);
         } catch {
-          if (text.includes('success')) {
-            jsonRes = { success: true };
-          } else {
-            throw new Error(`GAS応答の解析失敗: ${text.slice(0, 100)}`);
-          }
+          const isHtmlLogin = text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('accounts.google.com');
+          throw new Error(
+            isHtmlLogin
+              ? 'GASがHTMLページを返しました。「アクセスできるユーザー」が「全員 (Anyone)」でデプロイされているかご確認ください。'
+              : `GAS応答の解析失敗: ${text.slice(0, 100)}`
+          );
         }
 
-        if (jsonRes.success) {
+        if (jsonRes.success === true) {
           resultSuccess = true;
-          resultMsg = jsonRes.message || '送信成功';
         } else {
           throw new Error(jsonRes.error || 'GASエラー');
         }
@@ -250,12 +337,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <h2 className="text-sm font-bold text-white">報告・アルバム設定</h2>
+                <h2 className="text-sm font-bold text-white">報告・アップロード設定</h2>
                 <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-slate-800 text-sky-400 border border-slate-700">
                   {APP_VERSION}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">Googleフォト共有アルバム・送信先の指定</p>
+              <p className="text-[11px] text-slate-400">Googleドライブ・差出人・送信先の設定</p>
             </div>
           </div>
           <button
@@ -276,42 +363,148 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
         )}
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-4 py-3 space-y-3.5">
-          {/* Section 1: Google Photos Shared Album */}
-          <div className="p-3 rounded-xl bg-gradient-to-br from-sky-950/60 to-slate-900 border border-sky-500/40 shadow-sm space-y-2">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          {/* 1. Google Drive Folder URL (Highlighted at top) */}
+          <div className="p-3 rounded-xl bg-gradient-to-br from-sky-950/60 to-slate-900 border border-sky-500/40 shadow-sm space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="flex items-center gap-1.5 text-xs font-bold text-sky-300">
-                <LinkIcon className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                <span>共有GoogleフォトアルバムURL</span>
+                <HardDrive className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                <span>GoogleドライブのURL（写真保存先）</span>
               </label>
               <button
                 type="button"
-                onClick={handleTestAlbumUrl}
+                onClick={handleOpenDriveUrl}
                 className="text-[10px] font-semibold text-sky-400 hover:text-sky-300 flex items-center gap-1 bg-sky-500/10 hover:bg-sky-500/20 px-2 py-0.5 rounded border border-sky-500/30 transition cursor-pointer"
               >
                 <ExternalLink className="w-3 h-3" />
-                <span>アルバム確認</span>
+                <span>フォルダ確認</span>
               </button>
             </div>
             <input
               type="url"
-              value={form.albumUrl}
-              onChange={(e) => setForm({ ...form, albumUrl: e.target.value })}
-              className="w-full rounded-lg bg-slate-950 border border-sky-500/30 px-2.5 py-2 text-xs text-white focus:outline-none focus:border-sky-400 font-mono shadow-inner"
-              placeholder="https://photos.app.goo.gl/..."
-              required
+              value={form.googleDriveUrl || ''}
+              onChange={(e) => setForm({ ...form, googleDriveUrl: e.target.value })}
+              className="w-full rounded-lg bg-slate-950 border border-sky-500/30 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-400 font-mono shadow-inner"
+              placeholder="https://drive.google.com/drive/folders/..."
             />
             <p className="text-[10px] text-slate-300 leading-tight">
-              💡 メイン画面の「Googleフォト共有」ボタンを押すと、<strong>アルバムを開くことなく1タップ</strong>で端末のGoogleフォトへ写真を直接共有できます。
+              GAS連携による直接アップロード時に、このドライブフォルダへ直接写真が保存されます。
             </p>
           </div>
 
-          {/* Section 2: Direct In-App Mail Transmission (GAS Web App) */}
-          <div className="p-3 rounded-xl bg-slate-950/90 border border-slate-800 space-y-2">
+          {/* 2. Sender Email & Sender Name */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div>
+              <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-300 mb-1">
+                <AtSign className="w-3 h-3 text-sky-400" />
+                差出人アドレス
+              </label>
+              <input
+                type="text"
+                value={form.senderEmail || ''}
+                onChange={(e) => setForm({ ...form, senderEmail: e.target.value })}
+                className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-sky-500 font-mono"
+                placeholder="-"
+              />
+            </div>
+
+            <div>
+              <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-300 mb-1">
+                <User className="w-3 h-3 text-sky-400" />
+                差出人名
+              </label>
+              <input
+                type="text"
+                value={form.senderName || ''}
+                onChange={(e) => setForm({ ...form, senderName: e.target.value })}
+                className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
+                placeholder="-"
+              />
+            </div>
+          </div>
+
+          {/* 3. To Email */}
+          <div>
+            <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-300 mb-1">
+              <Mail className="w-3 h-3 text-sky-400" />
+              送信先メールアドレス (To)
+            </label>
+            <input
+              type="email"
+              value={form.toEmail}
+              onChange={(e) => setForm({ ...form, toEmail: e.target.value })}
+              className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-sky-500 font-mono"
+              placeholder="marine_fusaki-resort@iconia.co.jp"
+              required
+            />
+          </div>
+
+          {/* 4. CC Emails */}
+          <div>
+            <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-300 mb-1">
+              <Mail className="w-3 h-3 text-sky-400" />
+              CCメールアドレス（カンマ区切り・不要時は空欄）
+            </label>
+            <textarea
+              rows={2}
+              value={form.ccEmails}
+              onChange={(e) => setForm({ ...form, ccEmails: e.target.value })}
+              className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-[11px] text-slate-100 focus:outline-none focus:border-sky-500 font-mono leading-relaxed"
+              placeholder="なし（空欄）"
+            />
+          </div>
+
+          {/* 5. BCC Emails */}
+          <div>
+            <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-300 mb-1">
+              <Mail className="w-3 h-3 text-sky-400" />
+              BCCメールアドレス（「（自分）」で送信者へ控え送信）
+            </label>
+            <input
+              type="text"
+              value={form.bccEmails || ''}
+              onChange={(e) => setForm({ ...form, bccEmails: e.target.value })}
+              className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-sky-500 font-mono"
+              placeholder="（自分）またはメールアドレス"
+            />
+          </div>
+
+          {/* 6. Auto subject behavior */}
+          <div className="bg-slate-950/70 p-2 rounded-xl border border-slate-800">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.autoSubjectFromFirstMedia}
+                onChange={(e) => setForm({ ...form, autoSubjectFromFirstMedia: e.target.checked })}
+                className="w-3.5 h-3.5 rounded text-sky-500 focus:ring-sky-500 bg-slate-900 border-slate-700"
+              />
+              <span className="text-[11px] font-semibold text-slate-200 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-sky-400" />
+                表題を「1番目のメディア説明」から自動連動
+              </span>
+            </label>
+          </div>
+
+          {/* 7. Greeting Header */}
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+              本文の定型挨拶文
+            </label>
+            <textarea
+              rows={4}
+              value={form.greetingHeader}
+              onChange={(e) => setForm({ ...form, greetingHeader: e.target.value })}
+              className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-sky-500 leading-relaxed"
+              placeholder="【写真報告】お疲れ様です。"
+            />
+          </div>
+
+          {/* 8. Direct In-App Mail & Drive Upload Endpoint (GAS Web App) */}
+          <div className="p-2.5 rounded-xl bg-slate-950/90 border border-slate-800 space-y-2">
             <div className="flex items-center justify-between">
               <label className="flex items-center gap-1 text-[11px] font-bold text-slate-200">
                 <Send className="w-3 h-3 text-sky-400" />
-                <span>アプリ単体メール送信用GAS URL</span>
+                <span>アプリ単体送信用GAS URL</span>
               </label>
               <div className="flex items-center gap-1.5">
                 <button
@@ -344,10 +537,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
             </div>
 
             {showGasHelp && (
-              <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-300 space-y-1">
-                <p className="font-bold text-sky-300">【アプリから直接メール送信する仕組み】</p>
-                <p>Google Apps Script(無料)をデプロイしてURLを登録すると、Gmailアプリを開かずに本アプリのボタン1つで画像添付付きメールを送信できます。</p>
-                <p className="text-[10px] text-amber-300">※未設定の場合は「Gmailで送信（宛先・CC自動入力）」がご利用いただけます。</p>
+              <div className="p-2 rounded-lg bg-slate-900 border border-slate-700 text-[10px] text-slate-300 space-y-1">
+                <p className="font-bold text-sky-300">【アプリ直接送信・ドライブ保存の仕組み】</p>
+                <p>上の「GASコード」をGoogle Apps Scriptに貼り付けてウェブアプリとしてデプロイ（アクセス：全員）すると、指定したGoogleドライブへの写真直接保存＆メール直接送信が動作します。</p>
               </div>
             )}
 
@@ -377,7 +569,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
               </button>
             </div>
 
-            {/* Test result feedback */}
             {gasTestResult && (
               <div
                 className={`p-2 rounded-lg text-[11px] leading-tight ${
@@ -391,90 +582,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
             )}
           </div>
 
-          {/* Sender */}
-          <div>
-            <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-300 mb-1">
-              <User className="w-3 h-3 text-sky-400" />
-              差出人名
-            </label>
+          {/* 9. Shared Google Photos Album URL (Moved to bottom as requested) */}
+          <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
+                <LinkIcon className="w-3 h-3 text-slate-400 shrink-0" />
+                <span>共有GoogleフォトアルバムURL</span>
+              </label>
+              <button
+                type="button"
+                onClick={handleTestAlbumUrl}
+                className="text-[10px] font-semibold text-slate-300 hover:text-white flex items-center gap-1 bg-slate-800 hover:bg-slate-750 px-2 py-0.5 rounded border border-slate-700 transition cursor-pointer"
+              >
+                <ExternalLink className="w-3 h-3" />
+                <span>アルバム確認</span>
+              </button>
+            </div>
             <input
-              type="text"
-              value={form.senderName}
-              onChange={(e) => setForm({ ...form, senderName: e.target.value })}
-              className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
-              placeholder="自分"
+              type="url"
+              value={form.albumUrl}
+              onChange={(e) => setForm({ ...form, albumUrl: e.target.value })}
+              className="w-full rounded-lg bg-slate-900 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-sky-500 font-mono"
+              placeholder="https://photos.app.goo.gl/..."
             />
           </div>
 
-          {/* To Email */}
-          <div>
-            <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-300 mb-1">
-              <Mail className="w-3 h-3 text-sky-400" />
-              送信先メールアドレス (To)
-            </label>
-            <input
-              type="email"
-              value={form.toEmail}
-              onChange={(e) => setForm({ ...form, toEmail: e.target.value })}
-              className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-sky-500 font-mono"
-              placeholder="marine_fusaki-resort@iconia.co.jp"
-              required
-            />
-          </div>
-
-          {/* CC Emails */}
-          <div>
-            <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-300 mb-1">
-              <Mail className="w-3 h-3 text-sky-400" />
-              CCメールアドレス（カンマ区切りで複数指定）
-            </label>
-            <textarea
-              rows={2}
-              value={form.ccEmails}
-              onChange={(e) => setForm({ ...form, ccEmails: e.target.value })}
-              className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-[11px] text-slate-100 focus:outline-none focus:border-sky-500 font-mono leading-relaxed"
-              placeholder="masahiko.saito@...,toshie.matsui@..."
-            />
-          </div>
-
-          {/* Auto subject behavior */}
-          <div className="bg-slate-950/70 p-2 rounded-xl border border-slate-800">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.autoSubjectFromFirstMedia}
-                onChange={(e) => setForm({ ...form, autoSubjectFromFirstMedia: e.target.checked })}
-                className="w-3.5 h-3.5 rounded text-sky-500 focus:ring-sky-500 bg-slate-900 border-slate-700"
-              />
-              <span className="text-[11px] font-semibold text-slate-200 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-sky-400" />
-                表題を「1番目のメディア説明」から自動連動
-              </span>
-            </label>
-          </div>
-
-          {/* Greeting Header */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-              本文の定型挨拶文
-            </label>
-            <textarea
-              rows={2}
-              value={form.greetingHeader}
-              onChange={(e) => setForm({ ...form, greetingHeader: e.target.value })}
-              className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
-              placeholder="お疲れ様です。以下ご報告になります。画像をご覧ください"
-            />
-          </div>
-
-          {/* Actions: 初期値に戻す / テスト値に戻す / 設定を保存 */}
+          {/* Actions: テスト値に戻す / 初期値に戻す / 設定を保存 */}
           <div className="pt-2 border-t border-slate-800 space-y-2">
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={handleResetToTest}
                 className="flex-1 flex items-center justify-center gap-1 text-[11px] font-semibold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 py-1.5 px-2 rounded-lg transition cursor-pointer active:scale-95"
-                title="宛先をyooooohey@gmail.comに設定"
+                title="テスト設定値に切り替え"
               >
                 <Beaker className="w-3 h-3 text-amber-400" />
                 <span>テスト値に戻す</span>
